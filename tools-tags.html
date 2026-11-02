@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#10131c">
+<title>Akap Player — Editor de tags MP3</title>
+<style>
+:root{color-scheme:dark;--bg:#10131c;--panel:#191e2b;--panel2:#202738;--line:#30394d;--text:#f4f6fb;--muted:#a5aec0;--accent:#a78bfa;--accent2:#7c5ce7;--ok:#55d6a3;--danger:#ff7e8a}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 15% 0%,#282044 0,transparent 38%),var(--bg);color:var(--text);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{width:min(1040px,calc(100% - 32px));margin:0 auto;padding:42px 0 28px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:26px}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),#5e46c9);font-size:22px;box-shadow:0 10px 28px #8b6eff30}
+.brand h1{font-size:20px;letter-spacing:-.04em;margin:0}
+.brand p{margin:1px 0 0;color:var(--muted);font-size:13px}
+.privacy{font-size:12px;color:#c9d1df;background:#ffffff0a;border:1px solid var(--line);border-radius:999px;padding:8px 12px}
+.hero{margin:22px 0 20px}
+.hero h2{font-size:clamp(28px,5vw,42px);letter-spacing:-.055em;line-height:1.08;margin:0 0 10px}
+.hero p{color:var(--muted);margin:0;max-width:650px}
+.drop{border:1.5px dashed #515b75;border-radius:18px;background:#ffffff05;padding:26px;display:flex;align-items:center;justify-content:space-between;gap:18px;transition:.2s;cursor:pointer}
+.drop:hover,.drop.drag{border-color:var(--accent);background:#a78bfa12}
+.drop-left{display:flex;align-items:center;gap:15px}
+.upload-icon{width:48px;height:48px;border-radius:15px;background:#a78bfa1a;display:grid;place-items:center;color:#c6b6ff;font-size:23px}
+.drop strong{display:block;font-size:15px}
+.drop small{display:block;color:var(--muted);margin-top:3px}
+.button{border:0;border-radius:11px;background:var(--accent);color:#171329;font-weight:750;padding:11px 16px;font-size:14px;cursor:pointer;transition:.16s}
+.button:hover{background:#b8a2ff;transform:translateY(-1px)}
+.button.secondary{background:#ffffff0c;color:var(--text);border:1px solid var(--line)}
+.button.secondary:hover{background:#ffffff16}
+.button:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.hidden{display:none!important}
+.workspace{display:grid;grid-template-columns:300px 1fr;gap:18px;margin-top:20px}
+.card{background:linear-gradient(160deg,#1b2130,#171c28);border:1px solid var(--line);border-radius:18px;padding:20px}
+.cover-card{display:flex;flex-direction:column}
+.section-title{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:#bac3d5;margin:0 0 14px;font-weight:750}
+.cover{width:100%;aspect-ratio:1;border-radius:13px;background:linear-gradient(135deg,#292445,#1d2434);display:grid;place-items:center;overflow:hidden;color:#897fa8;font-size:54px;position:relative;border:1px solid #ffffff0c}
+.cover img{width:100%;height:100%;object-fit:cover}
+.cover-actions{display:flex;gap:9px;margin-top:13px}
+.cover-actions .button{flex:1;padding:9px 10px;font-size:13px}
+.file-info{margin-top:18px;padding-top:15px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.file-info strong{color:#e4e8f1;font-weight:600}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.field.full{grid-column:1/-1}
+label{font-size:12px;color:#c1c9d8;display:block;margin:0 0 6px;font-weight:650}
+input,textarea{width:100%;background:#111621;border:1px solid #343d51;color:var(--text);border-radius:10px;padding:11px 12px;font:inherit;font-size:14px;outline:none;transition:.15s}
+input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px #a78bfa20}
+input::placeholder,textarea::placeholder{color:#69748a}
+textarea{resize:vertical;min-height:78px}
+.form-footer{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:20px;padding-top:17px;border-top:1px solid var(--line)}
+.status{font-size:12px;color:var(--muted);min-height:20px}
+.status.error{color:var(--danger)}
+.status.success{color:var(--ok)}
+.actions{display:flex;gap:9px}
+.footer-note{font-size:12px;color:#788297;margin:20px 2px 0}
+.file-name{color:#dce1ed}
+@media(max-width:760px){
+  .workspace{grid-template-columns:1fr}
+  .cover-card{display:grid;grid-template-columns:120px 1fr;column-gap:15px;align-items:start}
+  .cover-card .section-title{grid-column:1/-1}
+  .cover{width:120px}
+  .cover-actions{flex-direction:column;margin-top:0}
+  .file-info{grid-column:1/-1}
+  .drop{padding:19px;align-items:flex-start}
+  .drop>.button{white-space:nowrap}
+  .privacy{display:none}
+}
+@media(max-width:520px){
+  .wrap{width:min(100% - 22px,1040px);padding-top:25px}
+  .fields{grid-template-columns:1fr}
+  .field.full{grid-column:auto}
+  .drop{flex-direction:column}
+  .drop>.button{width:100%}
+  .form-footer{align-items:flex-start;flex-direction:column}
+  .actions{width:100%}
+  .actions .button{flex:1}
+  .brand h1{font-size:18px}
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">♫</div>
+      <div><h1>Akap Player</h1><p>Ferramenta: editor de metadados MP3</p></div>
+    </div>
+    <div class="privacy">🔒 Seus arquivos ficam no seu dispositivo</div>
+  </header>
+
+  <section class="hero">
+    <h2>Deixe sua música<br>com a sua cara.</h2>
+    <p>Edite as informações e a capa do MP3 e baixe uma cópia pronta. Simples, rápido e direto no navegador.</p>
+  </section>
+
+  <label class="drop" id="dropZone" for="fileInput" tabindex="0" role="button" aria-label="Selecionar arquivo MP3">
+    <div class="drop-left">
+      <div class="upload-icon">⬆</div>
+      <div>
+        <strong id="dropTitle">Escolha um arquivo MP3</strong>
+        <small id="dropSubtitle">ou arraste e solte aqui · somente arquivos .mp3</small>
+      </div>
+    </div>
+    <span class="button">Selecionar MP3</span>
+  </label>
+  <input class="hidden" id="fileInput" type="file" accept="audio/mpeg,.mp3">
+
+  <section class="workspace hidden" id="workspace">
+    <aside class="card cover-card">
+      <h3 class="section-title">Capa do álbum</h3>
+      <div class="cover" id="coverPreview" aria-label="Prévia da capa">♫</div>
+      <div class="cover-actions">
+        <button class="button secondary" id="coverButton" type="button">Adicionar capa</button>
+        <button class="button secondary" id="removeCover" type="button">Remover</button>
+      </div>
+      <input class="hidden" id="coverInput" type="file" accept="image/jpeg,image/png,image/webp">
+      <div class="file-info" id="fileInfo">Nenhum arquivo selecionado</div>
+    </aside>
+
+    <section class="card">
+      <h3 class="section-title">Informações da faixa</h3>
+      <form id="tagForm" autocomplete="off">
+        <div class="fields">
+          <div class="field full"><label for="title">Título</label><input id="title" name="title" placeholder="Nome da música"></div>
+          <div class="field"><label for="artist">Artista</label><input id="artist" name="artist" placeholder="Nome do artista"></div>
+          <div class="field"><label for="album">Álbum</label><input id="album" name="album" placeholder="Nome do álbum"></div>
+          <div class="field"><label for="year">Ano</label><input id="year" name="year" inputmode="numeric" maxlength="4" placeholder="2026"></div>
+          <div class="field"><label for="genre">Gênero</label><input id="genre" name="genre" placeholder="Pop, Rock, Jazz…"></div>
+          <div class="field"><label for="track">Número da faixa</label><input id="track" name="track" inputmode="numeric" placeholder="1"></div>
+          <div class="field"><label for="albumArtist">Artista do álbum</label><input id="albumArtist" name="albumArtist" placeholder="Opcional"></div>
+          <div class="field full"><label for="comment">Comentário</label><textarea id="comment" name="comment" placeholder="Adicione uma observação (opcional)"></textarea></div>
+          <div class="field full"><label for="lyrics">Letra da música</label><textarea id="lyrics" name="lyrics" placeholder="Cole a letra aqui, sem marcações de tempo."></textarea></div>
+          <div class="field full"><label for="timedLyrics">Letra sincronizada (LRC)</label><textarea id="timedLyrics" name="timedLyrics" placeholder="[00:12.50]Primeiro verso&#10;[00:16.20]Próximo verso"></textarea><small style="display:block;color:var(--muted);font-size:12px;margin-top:6px">Uma linha por trecho, com o tempo entre colchetes. Exemplo: [01:23.45] letra. A letra sincronizada é gravada na tag SYLT.</small></div>
+        </div>
+        <div class="form-footer">
+          <div class="status" id="status" role="status" aria-live="polite">Selecione um MP3 para começar.</div>
+          <div class="actions">
+            <button class="button secondary" type="button" id="resetButton">Limpar campos</button>
+            <button class="button" type="submit" id="saveButton" disabled>Baixar MP3 editado</button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </section>
+
+  <p class="footer-note">A versão editada será baixada como um novo arquivo; o original não será alterado. A leitura e a edição de tags funcionam localmente, sem enviar seu arquivo para nenhum servidor.</p>
+</main>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const fileInput = $('fileInput'), coverInput = $('coverInput'), dropZone = $('dropZone');
+let currentFile = null, coverData = null, coverMime = null, coverUrl = null, loadToken = 0;
+
+const setStatus = (message, type = '') => { const el = $('status'); el.textContent = message; el.className = 'status ' + type; };
+const clearCoverUrl = () => { if (coverUrl) URL.revokeObjectURL(coverUrl); coverUrl = null; };
+const showCover = (blob) => {
+  clearCoverUrl();
+  const preview = $('coverPreview');
+  preview.replaceChildren();
+  if (blob){
+    coverUrl = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.src = coverUrl;
+    img.alt = 'Capa do álbum';
+    preview.append(img);
+  } else preview.textContent = '♫';
+};
+const setField = (name, value) => { const el = $(name); if (el) el.value = value ?? ''; };
+
+/* ---------- Decodificação de texto ID3 (consistente com o player) ---------- */
+const decodeID3Text = (bytes, encoding) => {
+  if (encoding === 1 || encoding === 2){
+    let pos = 0, littleEndian = false;
+    if (encoding === 1){
+      if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe){ littleEndian = true; pos = 2; }
+      else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff){ littleEndian = false; pos = 2; }
+      else littleEndian = true;
+    } else littleEndian = false;
+    let out = ''; const chunk = [];
+    for (; pos + 1 < bytes.length; pos += 2){
+      const code = littleEndian ? bytes[pos] | (bytes[pos+1] << 8) : (bytes[pos] << 8) | bytes[pos+1];
+      chunk.push(code);
+      if (chunk.length >= 4096){ out += String.fromCharCode(...chunk); chunk.length = 0; }
+    }
+    if (chunk.length) out += String.fromCharCode(...chunk);
+    return out.replace(/\0+$/g, '').trim();
+  }
+  try { return new TextDecoder(encoding === 3 ? 'utf-8' : 'windows-1252').decode(bytes).replace(/\u0000+$/g, '').trim(); }
+  catch { return new TextDecoder('utf-8').decode(bytes).replace(/\u0000+$/g, '').trim(); }
+};
+
+const syncSafe = (b, i) => ((b[i]&127)<<21)|((b[i+1]&127)<<14)|((b[i+2]&127)<<7)|(b[i+3]&127);
+
+/* ---------- Leitor ID3 local (sem CDN) ---------- */
+const parseLocalID3 = async file => {
+  const out = {};
+  try {
+    const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+    if (head.length < 10 || String.fromCharCode(...head.subarray(0, 3)) !== 'ID3') return out;
+    const version = head[3], flags = head[5], size = syncSafe(head, 6);
+    if (!size || size > 64*1024*1024) return out;
+    const bytes = new Uint8Array(await file.slice(10, 10 + size).arrayBuffer());
+    const map = version === 2
+      ? { TT2: 'title', TP1: 'artist', TAL: 'album', TCO: 'genre', TYE: 'year', TP2: 'albumArtist', TRK: 'track' }
+      : { TIT2: 'title', TPE1: 'artist', TALB: 'album', TCON: 'genre', TYER: 'year', TDRC: 'year', TPE2: 'albumArtist', TRCK: 'track' };
+    let p = 0;
+    if ((flags & 0x40) && bytes.length >= 4){
+      const n = version === 4 ? syncSafe(bytes, 0) : ((bytes[0]<<24)|(bytes[1]<<16)|(bytes[2]<<8)|bytes[3]);
+      p = Math.max(0, Math.min(bytes.length, n + 4));
+    }
+    while (p < bytes.length){
+      const hs = version === 2 ? 6 : 10;
+      if (p + hs > bytes.length) break;
+      const id = String.fromCharCode(...bytes.subarray(p, p + (version === 2 ? 3 : 4)));
+      if (!id.trim() || /^\0+$/.test(id)) break;
+      let len;
+      if (version === 2) len = (bytes[p+3]<<16)|(bytes[p+4]<<8)|bytes[p+5];
+      else if (version === 4) len = syncSafe(bytes, p + 4);
+      else len = (bytes[p+4]*0x1000000) + (bytes[p+5]<<16) + (bytes[p+6]<<8) + bytes[p+7];
+      p += hs;
+      if (!len || p + len > bytes.length) break;
+      const b = bytes.subarray(p, p + len); p += len;
+      if (map[id] && b.length > 1){
+        const val = decodeID3Text(b.subarray(1), b[0]);
+        if (val) out[map[id]] = val;
+        continue;
+      }
+      if ((id === 'COMM' || id === 'COM') && b.length > 5){
+        const enc = b[0], body = b.subarray(4), step = (enc === 1 || enc === 2) ? 2 : 1;
+        let q = 0;
+        while (q + step <= body.length && !(body[q] === 0 && (step === 1 || body[q+1] === 0))) q += step;
+        const text = decodeID3Text(body.subarray(Math.min(q + step, body.length)), enc);
+        out.comment = text;
+      }
+      if (id === 'USLT' && b.length > 8){
+        const enc = b[0], body = b.subarray(4), step = (enc === 1 || enc === 2) ? 2 : 1;
+        let q = 0;
+        while (q + step <= body.length && !(body[q] === 0 && (step === 1 || body[q+1] === 0))) q += step;
+        out.USLT = { text: decodeID3Text(body.subarray(Math.min(q + step, body.length)), enc) };
+      }
+      if (id === 'SYLT' && b.length > 8){
+        const enc = b[0], tsFmt = b[4], step = (enc === 1 || enc === 2) ? 2 : 1;
+        let q = 6;
+        while (q + step <= b.length && !(b[q] === 0 && (step === 1 || b[q+1] === 0))) q += step;
+        q += step;
+        const cues = [];
+        while (q < b.length){
+          const start = q;
+          while (q + step <= b.length && !(b[q] === 0 && (step === 1 || b[q+1] === 0))) q += step;
+          if (q + step + 4 > b.length) break;
+          const text = decodeID3Text(b.subarray(start, q), enc);
+          q += step;
+          const stamp = (b[q]*0x1000000) + (b[q+1]<<16) + (b[q+2]<<8) + b[q+3];
+          q += 4;
+          if (!text) continue;
+          const ms = tsFmt === 1 ? Math.round(stamp * 1000 / 75) : stamp;
+          cues.push([text, ms]);
+        }
+        if (cues.length) out.SYLT = { text: cues, timestampFormat: 2, language: String.fromCharCode(b[1], b[2], b[3]) };
+      }
+      if ((id === 'APIC' || id === 'PIC') && b.length > 6){
+        const enc = b[0]; let q = 1, mime = 'image/jpeg';
+        if (id === 'PIC'){ mime = String.fromCharCode(...b.subarray(q, q+3)).toLowerCase() === 'png' ? 'image/png' : 'image/jpeg'; q += 3; }
+        else { const e = b.indexOf(0, q); if (e < 0) continue; mime = new TextDecoder().decode(b.subarray(q, e)) || mime; q = e + 1; }
+        q++;
+        const step = (enc === 1 || enc === 2) ? 2 : 1;
+        while (q + step <= b.length && !(b[q] === 0 && (step === 1 || b[q+1] === 0))) q += step;
+        q += step;
+        if (q < b.length) out.picture = { format: mime, data: Array.from(b.subarray(q)) };
+      }
+    }
+  } catch {}
+  return out;
+};
+
+const readTags = async file => {
+  const local = await parseLocalID3(file);
+  return Object.keys(local).length ? local : null;
+};
+
+const formatSize = bytes => bytes < 1024*1024 ? `${(bytes/1024).toFixed(0)} KB` : `${(bytes/1024/1024).toFixed(2)} MB`;
+
+/* ---------- Carregar arquivo ---------- */
+async function loadFile(file){
+  if (!file) return;
+  if (!/\.mp3$/i.test(file.name) && file.type !== 'audio/mpeg'){ setStatus('Selecione um arquivo MP3 válido.', 'error'); return; }
+  currentFile = file;
+  const token = ++loadToken;
+  coverData = null; coverMime = null; clearCoverUrl();
+  $('tagForm').reset();
+  showCover(null);
+  $('workspace').classList.remove('hidden');
+  $('dropTitle').textContent = file.name;
+  $('dropSubtitle').textContent = 'Arquivo carregado · escolha outro para substituir';
+  $('fileInfo').innerHTML = `<strong>Arquivo</strong><br><span class="file-name"></span><br><br><strong>Tamanho</strong><br>${formatSize(file.size)}`;
+  $('fileInfo').querySelector('.file-name').textContent = file.name;
+  $('saveButton').disabled = false;
+  setStatus('Lendo metadados…');
+
+  const tags = await readTags(file);
+  if (token !== loadToken) return;
+
+  if (tags){
+    setField('title', tags.title);
+    setField('artist', tags.artist);
+    setField('album', tags.album);
+    setField('year', tags.year);
+    setField('genre', Array.isArray(tags.genre) ? tags.genre.join(', ') : tags.genre);
+    setField('track', tags.track);
+    setField('albumArtist', tags.TPE2 || tags.albumArtist);
+    const comment = tags.comment?.text || tags.comment;
+    setField('comment', typeof comment === 'string' ? comment : '');
+    const lyrics = tags.USLT?.text || tags.USLT || '';
+    setField('lyrics', typeof lyrics === 'string' ? lyrics : '');
+    const synced = tags.SYLT?.text;
+    setField('timedLyrics', Array.isArray(synced) ? synced.map(([line, ms]) => {
+      const t = Math.max(0, Number(ms) || 0);
+      const min = Math.floor(t / 60000), sec = Math.floor(t % 60000 / 1000), cs = Math.floor(t % 1000 / 10);
+      return `[${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}.${String(cs).padStart(2,'0')}]${line}`;
+    }).join('\n') : '');
+    const pic = tags.picture || tags.APIC || tags.image;
+    const picData = pic?.data?.length ? pic.data : null;
+    if (picData){
+      coverData = picData instanceof Uint8Array ? picData : new Uint8Array(picData);
+      coverMime = pic.format || pic.mime || pic.type || 'image/jpeg';
+      showCover(new Blob([coverData], { type: coverMime }));
+    } else showCover(null);
+    setStatus('Metadados carregados. Faça as alterações e baixe o arquivo.', 'success');
+  } else {
+    setStatus('Não encontrei tags ID3 legíveis. Você pode preencher os campos ou tentar outro MP3.', 'error');
+  }
+}
+
+/* ---------- Handshake com o player ---------- */
+parent.postMessage({ type: 'AKAP_READY' }, '*');
+
+window.addEventListener('message', event => {
+  const data = event.data;
+  if (!data || !data.type) return;
+  if (data.type === 'AKAP_LOAD_TRACK' && data.file){
+    loadFile(data.file);
+    return;
+  }
+});
+
+/* ---------- Eventos ---------- */
+fileInput.addEventListener('change', e => loadFile(e.target.files?.[0]));
+dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fileInput.click(); } });
+for (const ev of ['dragenter','dragover']) dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('drag'); });
+for (const ev of ['dragleave','drop']) dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('drag'); });
+dropZone.addEventListener('drop', e => loadFile(e.dataTransfer.files?.[0]));
+$('coverButton').addEventListener('click', () => coverInput.click());
+coverInput.addEventListener('change', async e => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  if (!['image/jpeg','image/png','image/webp'].includes(f.type)){ setStatus('Use uma imagem JPG, PNG ou WebP.', 'error'); return; }
+  coverData = new Uint8Array(await f.arrayBuffer());
+  coverMime = f.type;
+  showCover(f);
+  setStatus('Capa adicionada.', 'success');
+  e.target.value = '';
+});
+$('removeCover').addEventListener('click', () => {
+  coverData = null; coverMime = null; showCover(null);
+  setStatus('A capa será removida do arquivo editado.');
+});
+$('resetButton').addEventListener('click', () => {
+  $('tagForm').reset();
+  coverData = null; coverMime = null; showCover(null);
+  setStatus('Campos limpos.');
+});
+
+/* ---------- Salvar ---------- */
+$('tagForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!currentFile) return;
+  const button = $('saveButton');
+  button.disabled = true;
+  setStatus('Preparando o MP3 editado…');
+  try {
+    const { ID3Writer } = await import('https://esm.sh/browser-id3-writer@6.4.0');
+    const writer = new ID3Writer(await currentFile.arrayBuffer());
+    const value = id => $(id).value.trim();
+    const add = (frame, val) => { if (val) writer.setFrame(frame, val); };
+    add('TIT2', value('title'));
+    add('TPE1', value('artist') ? [value('artist')] : null);
+    add('TALB', value('album'));
+    if (value('year')) writer.setFrame('TYER', Number(value('year')));
+    add('TCON', value('genre') ? [value('genre')] : null);
+    add('TRCK', value('track'));
+    add('TPE2', value('albumArtist'));
+    add('COMM', value('comment') ? { description: '', text: value('comment'), language: 'por' } : null);
+    add('USLT', value('lyrics') ? { description: '', lyrics: value('lyrics'), language: 'por' } : null);
+    const lrc = value('timedLyrics');
+    if (lrc){
+      const cues = [];
+      for (const line of lrc.split(/\r?\n/)){
+        const matches = [...line.matchAll(/\[(\d+):(\d{2})(?:\.(\d{1,3}))?\]/g)];
+        if (!matches.length){
+          if (line.trim() && !/^\[[a-z]{2,3}:/i.test(line.trim())) throw new Error('Na letra sincronizada, cada verso precisa de um tempo no formato [mm:ss.xx].');
+          continue;
+        }
+        const text = line.replace(/\[\d+:\d{2}(?:\.\d{1,3})?\]/g, '').trim();
+        for (const m of matches){
+          const frac = (m[3] || '0').padEnd(3, '0').slice(0, 3);
+          cues.push([text, (Number(m[1])*60 + Number(m[2]))*1000 + Number(frac)]);
+        }
+      }
+      if (!cues.length) throw new Error('Não encontrei marcações de tempo válidas na letra LRC.');
+      cues.sort((a, b) => a[1] - b[1]);
+      writer.setFrame('SYLT', { type: 1, text: cues, timestampFormat: 2, language: 'por', description: 'Letra sincronizada' });
+    }
+    if (coverData?.length){
+      writer.setFrame('APIC', { type: 3, data: coverData.buffer.slice(coverData.byteOffset, coverData.byteOffset + coverData.byteLength), description: 'Capa' });
+    }
+    writer.addTag();
+    const output = writer.getBlob();
+    const url = URL.createObjectURL(output);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = currentFile.name.replace(/\.mp3$/i, '') + '-editado.mp3';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    setStatus('Pronto! O download do MP3 editado começou.', 'success');
+
+    /* Avisa o player para atualizar o cache e a UI */
+    try { parent.postMessage({ type: 'AKAP_SAVED', file: output }, '*'); } catch {}
+  } catch (err){
+    console.error(err);
+    setStatus(`Falha ao gravar: ${err?.message || 'erro inesperado'}. Verifique a conexão (a escrita de tags usa uma lib via CDN).`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+})();
+</script>
+</body>
+</html>
