@@ -93,9 +93,10 @@ input[type=file]{display:none}
 .app-nav button:hover{color:var(--text)}
 .tool-view{display:none;width:100%;height:min(82vh,1000px);min-height:620px;border:1px solid var(--line);border-radius:18px;background:var(--bg);overflow:hidden;position:relative}
 .tool-view.active{display:block}
-.tool-view iframe{display:block;width:100%;height:100%;border:0;background:var(--bg)}
-.tool-view .tool-loading{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:13px;background:var(--bg);z-index:2;transition:opacity .2s}
-.tool-view .tool-loading.hidden{opacity:0;pointer-events:none}
+.tool-view iframe{display:none;width:100%;height:100%;border:0;background:var(--bg)}
+.tool-view iframe.active{display:block}
+.tool-view .tool-loading{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:13px;background:var(--bg);z-index:2;transition:opacity .2s;pointer-events:none}
+.tool-view .tool-loading.hidden{opacity:0}
 .app>.grid.hidden{display:none}
 .logo{background:transparent!important;box-shadow:none!important;border-radius:0!important}
 .logo img{display:block;width:100%;height:100%;object-fit:contain}
@@ -132,7 +133,8 @@ input[type=file]{display:none}
 
 <section class="tool-view" id="toolView" aria-label="Ferramentas Akap Player">
   <div class="tool-loading" id="toolLoading"><span class="spinner"></span>Carregando ferramenta…</div>
-  <iframe title="Ferramenta Akap Player" id="toolFrame"></iframe>
+  <iframe title="Editor de tags MP3" id="frameTags" data-page="tags"></iframe>
+  <iframe title="Sincronizador de letras" id="frameLyrics" data-page="lyrics"></iframe>
 </section>
 
 <div class="grid">
@@ -192,14 +194,14 @@ input[type=file]{display:none}
 </section>
 </div>
 <div class="foot">Suas músicas e dados ficam neste dispositivo. A edição de tags funciona com arquivos MP3.</div>
-<div class="version" id="version">v2.0 · Akap Player</div>
+<div class="version" id="version">v2.1 · Akap Player</div>
 </main>
 <div class="toast" id="toast"></div>
 
 <script>
 (() => {
 'use strict';
-const APP_VERSION = 'v2.0 · Akap Player';
+const APP_VERSION = 'v2.1 · Akap Player';
 const $ = id => document.getElementById(id);
 const audio = $('audio');
 const dbName = 'orbita-player-db', dbStore = 'settings', stateKey = 'orbita-player-state-v1';
@@ -215,12 +217,11 @@ const tagCache = new Map();
 let filterGenre = '', filterAlbum = '', filterArtist = '', playQueue = [];
 let currentFileCache = null;
 
-/* Estado dos editores */
 const iframeReady = { tags: false, lyrics: false };
 const iframeLoaded = { tags: false, lyrics: false };
 let currentPage = 'player';
-let editorOwnsAudio = false;      // true quando o editor de letras está com o áudio
-let editorSavedTime = 0;          // posição que o editor devolveu ao sair
+let editorOwnsAudio = false;
+let editorSavedTime = 0;
 let editorSavedPlaying = false;
 
 const isAndroid = typeof window.AndroidBridge !== 'undefined';
@@ -344,7 +345,7 @@ function buildQueue(){
 }
 
 /* ============================================================
-   Parser ID3 no player (para título/artista/álbum/capa/letras)
+   Parser ID3 no player
    ============================================================ */
 function decodeSynchsafe(b,o){ return ((b[o]&127)<<21)|((b[o+1]&127)<<14)|((b[o+2]&127)<<7)|(b[o+3]&127); }
 function stripUnsync(bytes){ const out = []; for (let i = 0; i < bytes.length; i++){ out.push(bytes[i]); if (bytes[i] === 255 && bytes[i+1] === 0) i++; } return new Uint8Array(out); }
@@ -655,7 +656,6 @@ function loadTrack(index, { time = 0, autoplay = false } = {}){
   updateActiveRowUI();
   saveState({ trackId: identity(item), trackPath: item.orbitaPath || item.webkitRelativePath || item.name, trackSize: item.size, time: Math.max(0, time || 0) });
 
-  /* Se um editor está aberto, reenvia a faixa */
   if (currentPage !== 'player' && iframeReady[currentPage]) sendTrackToEditor(currentPage);
 }
 
@@ -781,6 +781,7 @@ audio.addEventListener('timeupdate', () => {
   updateActiveLyric();
   const s = Math.floor(audio.currentTime);
   if (lastSavedSec < 0 || s - lastSavedSec >= 4){ lastSavedSec = s; saveProgress(); }
+  if (currentPage === 'lyrics' && iframeReady.lyrics && !editorOwnsAudio) syncTimeToLyrics();
 });
 audio.addEventListener('loadedmetadata', () => { $('duration').textContent = fmt(audio.duration); });
 audio.addEventListener('play', () => { $('play').textContent = 'Ⅱ'; $('nowCard').classList.add('playing'); updateActiveRowUI(); if (!raf) drawViz(); });
@@ -881,22 +882,25 @@ async function restoreSavedDirectory(){
 restoreFolder();
 
 /* ============================================================
-   Editores (iframes persistentes)
+   Editores (dois iframes persistentes)
    ============================================================ */
 const nav = [...document.querySelectorAll('.app-nav button')];
 const grid = document.querySelector('.app>.grid');
 const toolView = $('toolView');
-const frame = $('toolFrame');
+const frameTags = $('frameTags');
+const frameLyrics = $('frameLyrics');
+const frames = { tags: frameTags, lyrics: frameLyrics };
 
-const TOOL_SRC = {
-  tags:   'tools-tags.html',
-  lyrics: 'tools-lyrics.html'
-};
+const TOOL_SRC = { tags: 'tools-tags.html', lyrics: 'tools-lyrics.html' };
 
 let lastSyncSent = -1;
+let loadingPage = null;
+
+function frameFor(page){ return frames[page]; }
 
 async function sendTrackToEditor(page){
-  if (!iframeReady[page] || !frame.contentWindow) return;
+  const f = frameFor(page);
+  if (!f || !iframeReady[page] || !f.contentWindow) return;
   const track = tracks[current];
   if (!track){ notify('Escolha uma faixa na biblioteca primeiro.'); return; }
 
@@ -916,43 +920,41 @@ async function sendTrackToEditor(page){
   if (!file && track instanceof File){ file = track; currentFileCache = file; }
   if (!file){ notify('Esta faixa não está disponível como arquivo para edição.'); return; }
 
-  /* Não transfere o File — só o "identificador" e o tempo atual.
-     O editor de letras recebe o Blob via AKAP_LOAD_TRACK; o de tags também.
-     Como o Blob é grande, usamos structured clone do File. */
   const time = page === 'lyrics' ? audio.currentTime : 0;
-  frame.contentWindow.postMessage({ type: 'AKAP_LOAD_TRACK', file, time }, '*');
+  f.contentWindow.postMessage({ type: 'AKAP_LOAD_TRACK', file, time }, '*');
 }
 
 function syncTimeToLyrics(){
-  if (!iframeReady.lyrics || !frame.contentWindow) return;
+  if (!iframeReady.lyrics || !frameLyrics.contentWindow) return;
   const t = audio.currentTime;
   if (Math.abs(t - lastSyncSent) < 0.25) return;
   lastSyncSent = t;
-  frame.contentWindow.postMessage({ type: 'AKAP_SEEK', time: t }, '*');
+  frameLyrics.contentWindow.postMessage({ type: 'AKAP_SEEK', time: t }, '*');
 }
 
 window.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || !data.type) return;
 
-  /* Handshake */
+  let originPage = null;
+  if (frameTags.contentWindow && event.source === frameTags.contentWindow) originPage = 'tags';
+  else if (frameLyrics.contentWindow && event.source === frameLyrics.contentWindow) originPage = 'lyrics';
+
   if (data.type === 'AKAP_READY'){
-    if (currentPage === 'tags' || currentPage === 'lyrics'){
-      iframeReady[currentPage] = true;
-      $('toolLoading').classList.add('hidden');
-      sendTrackToEditor(currentPage);
+    if (originPage){
+      iframeReady[originPage] = true;
+      if (loadingPage === originPage){ loadingPage = null; $('toolLoading').classList.add('hidden'); }
+      if (currentPage === originPage) sendTrackToEditor(originPage);
     }
     return;
   }
 
-  /* O editor de letras devolve o tempo atual (para sincronizar o player ao voltar) */
   if (data.type === 'AKAP_TIME'){
     editorSavedTime = Number(data.time) || 0;
     editorSavedPlaying = !!data.playing;
     return;
   }
 
-  /* O editor de letras pediu para pausar/tocar o player */
   if (data.type === 'AKAP_PLAYER_CONTROL'){
     if (data.action === 'pause'){ if (!audio.paused) pauseAudio(); }
     else if (data.action === 'play'){ playAudio(); }
@@ -960,15 +962,12 @@ window.addEventListener('message', (event) => {
     return;
   }
 
-  /* O editor salvou um arquivo editado */
   if (data.type === 'AKAP_SAVED' && data.file){
     if (tracks[current] && !tracks[current].isAndroid){
       const oldId = identity(tracks[current]);
       const newFile = data.file;
       currentFileCache = newFile;
-      /* Atualiza tags em cache */
       tagCache.delete(oldId);
-      /* Recarrega o áudio mantendo a posição */
       if (audio.dataset.objectUrl) URL.revokeObjectURL(audio.dataset.objectUrl);
       const url = URL.createObjectURL(newFile);
       const pos = audio.currentTime;
@@ -984,6 +983,17 @@ window.addEventListener('message', (event) => {
   }
 });
 
+function ensureIframeLoaded(page){
+  if (iframeLoaded[page]) return;
+  iframeLoaded[page] = true;
+  iframeReady[page] = false;
+  const f = frameFor(page);
+  if (!f) return;
+  loadingPage = page;
+  $('toolLoading').classList.remove('hidden');
+  f.src = TOOL_SRC[page] + '?v=4';
+}
+
 function openPage(page){
   nav.forEach(b => b.classList.toggle('active', b.dataset.page === page));
   grid.classList.toggle('hidden', page !== 'player');
@@ -991,55 +1001,44 @@ function openPage(page){
 
   const previousPage = currentPage;
 
-  /* Ao SAIR do editor de letras, devolve o tempo ao player */
-  if (previousPage === 'lyrics' && page !== 'lyrics'){
-    const wasEditorPlaying = iframeReady.lyrics;
-    if (wasEditorPlaying){
-      /* Pergunta ao editor o tempo final; o editor responde com AKAP_TIME
-         via postMessage (implementado no tools-lyrics.html) */
-      try { frame.contentWindow.postMessage({ type: 'AKAP_GET_TIME' }, '*'); } catch {}
-      /* Delay mínimo para receber a resposta antes de trocar de src */
-    }
-    editorOwnsAudio = false;
+  if (previousPage === 'lyrics' && page !== 'lyrics' && iframeReady.lyrics){
+    try { frameLyrics.contentWindow.postMessage({ type: 'AKAP_GET_TIME' }, '*'); } catch {}
   }
 
   currentPage = page;
 
   if (page !== 'player'){
-    if (!iframeLoaded[page]){
-      iframeLoaded[page] = true;
-      iframeReady[page] = false;
-      lastSyncSent = -1;
-      $('toolLoading').classList.remove('hidden');
-      frame.title = page === 'tags' ? 'Editor de tags MP3' : 'Sincronizador de letras';
-      frame.src = TOOL_SRC[page] + '?v=2';
-    } else {
-      $('toolLoading').classList.add('hidden');
-      if (iframeReady[page]) sendTrackToEditor(page);
-    }
-    /* Se entrou no editor de letras, pausa o player (o editor assume) */
+    ensureIframeLoaded(page);
+    frameTags.classList.toggle('active', page === 'tags');
+    frameLyrics.classList.toggle('active', page === 'lyrics');
+    $('toolLoading').classList.toggle('hidden', iframeReady[page] || loadingPage !== page);
+
+    if (iframeReady[page]) sendTrackToEditor(page);
+
     if (page === 'lyrics'){
       if (!audio.paused) pauseAudio();
       editorOwnsAudio = true;
-      setTimeout(() => { if (iframeReady.lyrics && frame.contentWindow) frame.contentWindow.postMessage({ type: 'AKAP_SEEK', time: audio.currentTime }, '*'); }, 300);
+      setTimeout(() => {
+        if (iframeReady.lyrics && frameLyrics.contentWindow){
+          frameLyrics.contentWindow.postMessage({ type: 'AKAP_SEEK', time: audio.currentTime }, '*');
+        }
+      }, 300);
+    } else if (page === 'tags'){
+      editorOwnsAudio = false;
     }
   } else {
     $('toolLoading').classList.add('hidden');
-    /* Voltou ao player: retoma o áudio no ponto que o editor deixou */
     if (editorOwnsAudio){
       const t = editorSavedTime;
       const shouldPlay = editorSavedPlaying;
       editorOwnsAudio = false;
       if (Number.isFinite(t)){
-        audio.addEventListener('loadedmetadata', () => {
+        const apply = () => {
           audio.currentTime = Math.min(t, audio.duration || t);
           if (shouldPlay) playAudio();
-        }, { once: true });
-        /* Já está carregado, então só ajusta */
-        if (audio.readyState >= 1){
-          audio.currentTime = Math.min(t, audio.duration || t);
-          if (shouldPlay) playAudio();
-        }
+        };
+        if (audio.readyState >= 1) apply();
+        else audio.addEventListener('loadedmetadata', apply, { once: true });
       }
     }
   }
@@ -1048,15 +1047,6 @@ function openPage(page){
 }
 
 nav.forEach(button => button.addEventListener('click', () => openPage(button.dataset.page)));
-
-/* Quando o player muda de tempo, manda para o editor de letras (se ativo) */
-audio.addEventListener('timeupdate', () => {
-  if (currentPage === 'lyrics' && iframeReady.lyrics && editorOwnsAudio === false){
-    /* Se o editor de letras está ativo mas NÃO está com o áudio (raro),
-       sincroniza a posição. Normalmente o editor tem o áudio. */
-    syncTimeToLyrics();
-  }
-});
 
 })();
 </script>
