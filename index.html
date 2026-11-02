@@ -194,14 +194,14 @@ input[type=file]{display:none}
 </section>
 </div>
 <div class="foot">Suas músicas e dados ficam neste dispositivo. A edição de tags funciona com arquivos MP3.</div>
-<div class="version" id="version">v2.1 · Akap Player</div>
+<div class="version" id="version">v2.2 · Akap Player</div>
 </main>
 <div class="toast" id="toast"></div>
 
 <script>
 (() => {
 'use strict';
-const APP_VERSION = 'v2.1 · Akap Player';
+const APP_VERSION = 'v2.2 · Akap Player';
 const $ = id => document.getElementById(id);
 const audio = $('audio');
 const dbName = 'orbita-player-db', dbStore = 'settings', stateKey = 'orbita-player-state-v1';
@@ -223,6 +223,12 @@ let currentPage = 'player';
 let editorOwnsAudio = false;
 let editorSavedTime = 0;
 let editorSavedPlaying = false;
+
+/* Fila de pré-carregamento de tags */
+let prefetchQueue = [];
+let prefetchRunning = false;
+let prefetchAbort = false;
+const PREFETCH_CONCURRENCY = 4;
 
 const isAndroid = typeof window.AndroidBridge !== 'undefined';
 $('version').textContent = APP_VERSION;
@@ -271,6 +277,7 @@ function loadAndroidTracks(files, folderLabel, { restored = false } = {}) {
   rebuildFilterOptions();
   renderList();
   buildQueue();
+  prefetchAllTags();
   if (!tracks.length) return;
 
   const saved = readState();
@@ -299,14 +306,52 @@ async function dbGet(k){ const db = await openDB(); return new Promise((res, rej
 function notify(msg){ const el = $('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3000); }
 function fmt(sec){ if (!Number.isFinite(sec) || sec < 0) return '0:00'; const m = Math.floor(sec/60), s = Math.floor(sec%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function identity(item){ return item.uri ? `${item.name}|${item.size}|${item.lastModified}|android` : `${item.name}|${item.size}|${item.lastModified||0}`; }
+
+/* label: NÃO usa número como artista */
 function label(item){
   const tags = tagCache.get(identity(item));
-  const name = item.name.replace(/\.[^.]+$/, '');
-  const bits = name.split(/\s+-\s+/);
-  const fallback = bits.length >= 2 ? { artist: bits.shift().trim(), title: bits.join(' - ').trim() } : { artist: 'Artista não identificado', title: name };
-  return { artist: tags?.artist || fallback.artist, title: tags?.title || fallback.title };
+  const rawName = item.name.replace(/\.[^.]+$/, '');
+  let fallbackArtist = 'Artista não identificado';
+  let fallbackTitle = rawName;
+
+  const bits = rawName.split(/\s+-\s+/);
+  if (bits.length >= 2){
+    const first = bits[0].trim();
+    if (first && !/^\d+$/.test(first)){
+      fallbackArtist = first;
+      fallbackTitle = bits.slice(1).join(' - ').trim() || rawName;
+    } else {
+      fallbackTitle = bits.slice(1).join(' - ').trim() || rawName;
+    }
+  }
+
+  return {
+    artist: tags?.artist || fallbackArtist,
+    title: tags?.title || fallbackTitle
+  };
 }
-function metaOf(item){ const tags = tagCache.get(identity(item)); const base = label(item); return { title: base.title, artist: tags?.artist || base.artist, album: tags?.album || '', genre: tags?.genre || '' }; }
+
+/* metaOf: normaliza genre (ex.: "(17)Rock" → "Rock") */
+function metaOf(item){
+  const tags = tagCache.get(identity(item));
+  const base = label(item);
+  let genre = tags?.genre || '';
+  if (genre){
+    const stripped = genre.replace(/^\(\d+\)/, '').replace(/^\d+$/, '').trim();
+    if (stripped) genre = stripped;
+    /* Se for múltiplos gêneros separados, usa o primeiro */
+    if (genre.includes(';')) genre = genre.split(';')[0].trim();
+    else if (genre.includes('/') && !/^[\d()]+$/.test(genre)) {
+      /* evita cortar "R&B" ou "Rock/Pop"; mantém como está se não for numérico */
+    }
+  }
+  return {
+    title: base.title,
+    artist: base.artist,
+    album: tags?.album || '',
+    genre
+  };
+}
 
 /* ============================================================
    Filtros e fila
@@ -345,10 +390,65 @@ function buildQueue(){
 }
 
 /* ============================================================
-   Parser ID3 no player
+   Pré-carregamento das tags em background
    ============================================================ */
-function decodeSynchsafe(b,o){ return ((b[o]&127)<<21)|((b[o+1]&127)<<14)|((b[o+2]&127)<<7)|(b[o+3]&127); }
+function prefetchAllTags(){
+  prefetchAbort = false;
+  prefetchQueue = tracks.map((t, i) => i).filter(i => !tagCache.has(identity(tracks[i])));
+  if (!prefetchQueue.length){ rebuildFilterOptions(); renderList(); return; }
+  if (!prefetchRunning){ prefetchRunning = true; runPrefetch(); }
+}
+
+async function runPrefetch(){
+  let processed = 0;
+  const total = prefetchQueue.length;
+
+  async function worker(){
+    while (prefetchQueue.length && !prefetchAbort){
+      const idx = prefetchQueue.shift();
+      const item = tracks[idx];
+      if (!item) continue;
+      const key = identity(item);
+      if (tagCache.has(key)) continue;
+      try {
+        let tags = {};
+        if (item.isAndroid){
+          /* Não temos File no Android sem fetch; deixa o cache vazio por enquanto.
+             Quando o usuário abrir o editor, o fetch traz as tags.
+             Mas podemos tentar ler o título pelo nome do arquivo. */
+          tags = {};
+        } else {
+          tags = await readID3(item);
+        }
+        tagCache.set(key, tags);
+      } catch {}
+      processed++;
+      if (processed % 5 === 0){
+        /* Atualiza filtros e lista a cada 5 faixas processadas */
+        rebuildFilterOptions();
+        renderList();
+      }
+      /* Cede o thread para não travar a UI */
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < Math.min(PREFETCH_CONCURRENCY, prefetchQueue.length); i++) workers.push(worker());
+  await Promise.all(workers);
+
+  prefetchRunning = false;
+  rebuildFilterOptions();
+  renderList();
+  if (total > 0) notify(`Tags de ${total} faixas carregadas.`);
+}
+
+/* ============================================================
+   Parser ID3 v2.2/v2.3/v2.4 robusto
+   ============================================================ */
+function decodeSynchsafe(b, o){ return ((b[o]&127)<<21)|((b[o+1]&127)<<14)|((b[o+2]&127)<<7)|(b[o+3]&127); }
 function stripUnsync(bytes){ const out = []; for (let i = 0; i < bytes.length; i++){ out.push(bytes[i]); if (bytes[i] === 255 && bytes[i+1] === 0) i++; } return new Uint8Array(out); }
+
 function decodeTagText(bytes, encoding){
   if (encoding === 1 || encoding === 2){
     let pos = 0, littleEndian = false;
@@ -360,15 +460,17 @@ function decodeTagText(bytes, encoding){
     let out = ''; const chunk = [];
     for (; pos + 1 < bytes.length; pos += 2){
       const code = littleEndian ? bytes[pos] | (bytes[pos+1] << 8) : (bytes[pos] << 8) | bytes[pos+1];
+      if (code === 0) break;
       chunk.push(code);
       if (chunk.length >= 4096){ out += String.fromCharCode(...chunk); chunk.length = 0; }
     }
     if (chunk.length) out += String.fromCharCode(...chunk);
     return out.replace(/\0+$/g, '').trim();
   }
-  const dec = new TextDecoder(encoding === 3 ? 'utf-8' : 'windows-1252');
-  return dec.decode(bytes).replace(/\0+$/g, '').trim();
+  const decoder = new TextDecoder(encoding === 3 ? 'utf-8' : 'windows-1252');
+  return decoder.decode(bytes).replace(/\0+$/g, '').trim();
 }
+
 function findTextTerminator(body, pos, encoding){
   const step = encoding === 1 || encoding === 2 ? 2 : 1;
   for (let i = pos; i + step <= body.length; i += step) if (body[i] === 0 && (step === 1 || body[i+1] === 0)) return { end: i, next: i + step };
@@ -410,43 +512,81 @@ function parsePicture(body, legacy = false){
   if (pos >= body.length) return null;
   return new Blob([body.subarray(pos)], { type: mime });
 }
+
 async function readID3(file){
   const result = {};
   try {
-    if (file.size >= 10){
-      const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
-      if (String.fromCharCode(...head.subarray(0,3)) === 'ID3'){
-        const ver = head[3], flags = head[5], size = decodeSynchsafe(head, 6);
-        if (size > 0 && size <= 32*1024*1024){
-          let bytes = new Uint8Array(await file.slice(10, 10+size).arrayBuffer());
-          if (flags & 0x80) bytes = stripUnsync(bytes);
-          let p = 0;
-          if (flags & 0x40){
-            if (ver === 3 && bytes.length >= 4) p = 4 + ((bytes[0]<<24)|(bytes[1]<<16)|(bytes[2]<<8)|bytes[3]);
-            else if (ver === 4 && bytes.length >= 4) p = decodeSynchsafe(bytes, 0);
-          }
-          while (p < bytes.length){
-            const h = ver === 2 ? 6 : 10;
-            if (p + h > bytes.length) break;
-            const id = String.fromCharCode(...bytes.subarray(p, p + (ver === 2 ? 3 : 4)));
-            if (!id.trim() || /^\0+$/.test(id)) break;
-            let len;
-            if (ver === 2) len = (bytes[p+3]<<16)|(bytes[p+4]<<8)|bytes[p+5];
-            else if (ver === 4) len = decodeSynchsafe(bytes, p+4);
-            else len = (bytes[p+4]<<24)|(bytes[p+5]<<16)|(bytes[p+6]<<8)|bytes[p+7];
-            p += h;
-            if (!len || p + len > bytes.length) break;
-            const body = bytes.subarray(p, p+len); p += len;
-            const map = ver === 2 ? { TT2: 'title', TP1: 'artist', TAL: 'album', TCO: 'genre' } : { TIT2: 'title', TPE1: 'artist', TALB: 'album', TCON: 'genre' };
-            if (map[id]) result[map[id]] = parseTextFrame(body);
-            if (!result.lyrics && id === 'SYLT') result.lyrics = parseSyncedLyricsFrame(body);
-            else if (!result.lyrics && (id === 'USLT' || id === 'ULT')) result.lyrics = parseLyricsFrame(body);
-            if ((id === 'APIC' || id === 'PIC') && !result.cover) result.cover = parsePicture(body, id === 'PIC');
-          }
-        }
+    if (file.size < 10) return result;
+    const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+    if (String.fromCharCode(...head.subarray(0,3)) !== 'ID3') return result;
+
+    const ver = head[3], flags = head[5], size = decodeSynchsafe(head, 6);
+    if (!size || size > 64 * 1024 * 1024) return result;
+
+    let bytes = new Uint8Array(await file.slice(10, 10 + size).arrayBuffer());
+    if (flags & 0x80) bytes = stripUnsync(bytes);
+
+    let p = 0;
+    if (flags & 0x40){
+      if (ver === 3 && bytes.length >= 4){
+        const extLen = ((bytes[0]<<24)|(bytes[1]<<16)|(bytes[2]<<8)|bytes[3]) >>> 0;
+        p = 4 + extLen;
+      } else if (ver === 4 && bytes.length >= 4){
+        p = decodeSynchsafe(bytes, 0);
       }
     }
-  } catch {}
+
+    while (p < bytes.length){
+      const h = ver === 2 ? 6 : 10;
+      if (p + h > bytes.length) break;
+
+      const id = String.fromCharCode(...bytes.subarray(p, p + (ver === 2 ? 3 : 4)));
+      if (!/^[A-Z0-9]{3,4}$/.test(id)) break;
+
+      let frameSize;
+      if (ver === 2) frameSize = (bytes[p+3]<<16)|(bytes[p+4]<<8)|bytes[p+5];
+      else if (ver === 4) frameSize = decodeSynchsafe(bytes, p+4);
+      else frameSize = ((bytes[p+4]<<24)|(bytes[p+5]<<16)|(bytes[p+6]<<8)|bytes[p+7]) >>> 0;
+
+      const frameFlags = ver === 2 ? 0 : ((bytes[p+8]<<8)|bytes[p+9]);
+      p += h;
+
+      if (!frameSize || p + frameSize > bytes.length) break;
+
+      let body = bytes.subarray(p, p + frameSize);
+      p += frameSize;
+
+      /* Flags por frame */
+      if (ver === 3){
+        if (frameFlags & 0x0080) continue;
+        if (frameFlags & 0x0040) continue;
+        if (frameFlags & 0x0020) body = body.subarray(1);
+        if (frameFlags & 0x0002) continue;
+      } else if (ver === 4){
+        if (frameFlags & 0x0008) continue;
+        if (frameFlags & 0x0004) continue;
+        if (frameFlags & 0x0040) body = body.subarray(1);
+        if (frameFlags & 0x0002) body = stripUnsync(body);
+      }
+
+      const map = ver === 2
+        ? { TT2:'title', TP1:'artist', TAL:'album', TCO:'genre', TYE:'year', TP2:'albumArtist', TRK:'track' }
+        : { TIT2:'title', TPE1:'artist', TALB:'album', TCON:'genre', TYER:'year', TDRC:'year', TPE2:'albumArtist', TRCK:'track' };
+
+      if (map[id] && body.length > 1){
+        const val = parseTextFrame(body);
+        if (val && !result[map[id]]) result[map[id]] = val;
+      }
+      if (!result.lyrics && id === 'SYLT') result.lyrics = parseSyncedLyricsFrame(body);
+      else if (!result.lyrics && (id === 'USLT' || id === 'ULT')) result.lyrics = parseLyricsFrame(body);
+      if ((id === 'APIC' || id === 'PIC') && !result.cover){
+        const pic = parsePicture(body, id === 'PIC');
+        if (pic) result.cover = pic;
+      }
+    }
+  } catch (e){
+    console.warn('readID3 falhou:', e);
+  }
   return result;
 }
 
@@ -532,6 +672,8 @@ async function applyTags(file, token){
   if (tags.lyrics) renderLyricsUI(tags.lyrics);
   updateMediaSession();
   updateActiveRowUI();
+  /* Atualiza filtros e fila DEPOIS que as tags chegaram */
+  rebuildFilterOptions();
   buildQueue();
 }
 
@@ -557,6 +699,7 @@ function setTracks(files, folderName = 'Arquivos escolhidos', restore = true){
   rebuildFilterOptions();
   renderList();
   buildQueue();
+  prefetchAllTags();
   if (!tracks.length){ notify('Não encontrei arquivos de áudio nessa seleção.'); return; }
   const saved = readState();
   let idx = restore ? tracks.findIndex(f => (f.orbitaPath || f.webkitRelativePath || f.name) === saved.trackPath && f.size === saved.trackSize) : -1;
@@ -991,7 +1134,7 @@ function ensureIframeLoaded(page){
   if (!f) return;
   loadingPage = page;
   $('toolLoading').classList.remove('hidden');
-  f.src = TOOL_SRC[page] + '?v=4';
+  f.src = TOOL_SRC[page] + '?v=5';
 }
 
 function openPage(page){
