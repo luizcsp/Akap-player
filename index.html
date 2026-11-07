@@ -100,6 +100,113 @@ input[type=file]{display:none}
 .app>.grid.hidden{display:none}
 .logo{background:transparent!important;box-shadow:none!important;border-radius:0!important}
 .logo img{display:block;width:100%;height:100%;object-fit:contain}
+
+/* ===== Botão de tela cheia (modo normal) ===== */
+.lyrics-toolbar{
+  position: sticky;
+  top: 0;
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  padding: 2px 0 8px;
+  z-index: 5;
+  background: linear-gradient(to bottom, rgba(16,16,20,.98), rgba(16,16,20,0));
+  flex: 0 0 auto;
+}
+.fs-btn{
+  border: 1px solid #494453;
+  border-radius: 10px;
+  padding: 6px 12px;
+  background: var(--panel2);
+  color: var(--text);
+  font: 600 12px system-ui;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: opacity .35s ease, background .2s ease, border-color .2s ease, color .2s ease;
+}
+.fs-btn:hover{ filter: brightness(1.15); border-color: var(--accent); color: var(--accent2); }
+
+/* ===== Modo Tela Cheia ===== */
+.lyrics-panel.fullscreen{
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  background: rgba(16,16,20,.98);
+  z-index: 1000;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.lyrics-panel.fullscreen .lyrics-container{
+  padding: 30vh 0 40vh 0;
+  gap: 20px;
+}
+.lyrics-panel.fullscreen .lyric-line{ font-size: 16px; }
+.lyrics-panel.fullscreen .lyric-line.active{ font-size: 21px; }
+
+/* Em paisagem, mais respiro e fonte maior */
+@media (orientation: landscape){
+  .lyrics-panel.fullscreen .lyrics-container{ padding: 35vh 0 45vh 0; }
+  .lyrics-panel.fullscreen .lyric-line{ font-size: 17px; }
+  .lyrics-panel.fullscreen .lyric-line.active{ font-size: 23px; }
+}
+
+/* Trava scroll do body */
+body.lyrics-fullscreen{ overflow: hidden; }
+
+/* Em tela cheia: toolbar sai do fluxo e vira botão fixo na viewport */
+.lyrics-panel.fullscreen .lyrics-toolbar{
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
+  left: auto;
+  width: auto;
+  padding: 0;
+  background: transparent;
+  justify-content: flex-end;
+  z-index: 1100;
+  pointer-events: none;
+}
+.lyrics-panel.fullscreen .fs-btn{
+  pointer-events: auto;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  opacity: .3;
+  background: rgba(34,34,43,.55);
+  border: 1px solid rgba(255,255,255,.12);
+  color: #e9e5f5;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.lyrics-panel.fullscreen .fs-btn:hover,
+.lyrics-panel.fullscreen .fs-btn:focus-visible{
+  opacity: 1;
+  background: var(--panel2);
+  border-color: var(--accent);
+  color: var(--accent2);
+}
+.lyrics-panel.fullscreen .fs-btn.wake{
+  opacity: 1;
+  background: var(--panel2);
+  border-color: #494453;
+  box-shadow: 0 4px 18px #0006;
+}
+.lyrics-panel.fullscreen.idle .fs-btn{
+  opacity: 0;
+  pointer-events: none;
+}
+
 @media(max-width:760px){
   body{padding:12px}.grid{grid-template-columns:1fr;gap:14px}.now,.library{min-height:unset}
   .visual{height:190px}.list{max-height:310px}.card{padding:16px;border-radius:18px}
@@ -109,6 +216,7 @@ input[type=file]{display:none}
   .skipbtn{font-size:11px;padding:6px 8px;min-width:40px}
   header{flex-wrap:wrap;gap:10px}.brand h1{font-size:18px}
   .lyrics-panel{inset:45px 0 180px 0}
+  .lyrics-panel.fullscreen{ inset: 0 !important; }
   .app-nav{margin-top:-8px}.app-nav button{flex:1 1 100px;padding:9px 6px;font-size:12px}
   .tool-view{height:calc(100dvh - 125px);min-height:560px;border-radius:14px}
 }
@@ -909,6 +1017,124 @@ $('toggleLyricsBtn').addEventListener('click', () => {
   const active = panel.classList.toggle('hidden');
   $('toggleLyricsBtn').classList.toggle('active', !active);
 });
+
+/* ============================================================
+   Modo tela cheia da letra (aditivo, isolado)
+   ============================================================ */
+(function setupLyricsFullscreen(){
+  const panel = $('lyricsPanel');
+  if (!panel) return;
+
+  // Cria a barra de ferramentas DENTRO do painel (modo normal)
+  const toolbar = document.createElement('div');
+  toolbar.className = 'lyrics-toolbar';
+  const fsBtn = document.createElement('button');
+  fsBtn.type = 'button';
+  fsBtn.className = 'fs-btn';
+  fsBtn.id = 'lyricsFsBtn';
+  fsBtn.title = 'Tela cheia';
+  fsBtn.setAttribute('aria-label', 'Alternar tela cheia da letra');
+  fsBtn.textContent = '⛶ Tela cheia';
+  toolbar.appendChild(fsBtn);
+  panel.insertBefore(toolbar, panel.firstChild);
+
+  let isFullscreen = false;
+  let idleTimer = null;
+  const IDLE_DELAY = 3500;
+  const WAKE_DURATION = 3000;
+
+  function clearIdle(){
+    if (idleTimer){ clearTimeout(idleTimer); idleTimer = null; }
+  }
+
+  function goIdle(){
+    if (!isFullscreen) return;
+    panel.classList.add('idle');
+    fsBtn.classList.remove('wake');
+  }
+
+  function scheduleIdle(){
+    clearIdle();
+    if (!isFullscreen) return;
+    idleTimer = setTimeout(goIdle, IDLE_DELAY);
+  }
+
+  function wake(){
+    if (!isFullscreen) return;
+    panel.classList.remove('idle');
+    fsBtn.classList.add('wake');
+    clearIdle();
+    idleTimer = setTimeout(() => {
+      fsBtn.classList.remove('wake');
+      scheduleIdle();
+    }, WAKE_DURATION);
+  }
+
+  function onPanelPointerDown(e){
+    if (!isFullscreen) return;
+    if (e.target === fsBtn) return;
+    wake();
+  }
+
+  function enterFullscreen(){
+    if (isFullscreen) return;
+    isFullscreen = true;
+    panel.classList.add('fullscreen');
+    document.body.classList.add('lyrics-fullscreen');
+    fsBtn.textContent = '⛶';
+    fsBtn.title = 'Sair da tela cheia';
+    fsBtn.setAttribute('aria-label', 'Sair da tela cheia');
+
+    panel.classList.remove('hidden');
+    $('toggleLyricsBtn')?.classList.add('active');
+
+    if (panel.requestFullscreen && !document.fullscreenElement){
+      panel.requestFullscreen().catch(() => {});
+    }
+
+    panel.classList.remove('idle');
+    fsBtn.classList.add('wake');
+    scheduleIdle();
+
+    panel.addEventListener('pointerdown', onPanelPointerDown, { passive: true });
+  }
+
+  function exitFullscreen(){
+    if (!isFullscreen) return;
+    isFullscreen = false;
+    panel.classList.remove('fullscreen', 'idle');
+    document.body.classList.remove('lyrics-fullscreen');
+    fsBtn.classList.remove('wake');
+    fsBtn.textContent = '⛶ Tela cheia';
+    fsBtn.title = 'Tela cheia';
+    fsBtn.setAttribute('aria-label', 'Alternar tela cheia da letra');
+    clearIdle();
+
+    panel.removeEventListener('pointerdown', onPanelPointerDown);
+
+    if (document.fullscreenElement){
+      document.exitFullscreen().catch(() => {});
+    }
+  }
+
+  fsBtn.addEventListener('click', () => {
+    isFullscreen ? exitFullscreen() : enterFullscreen();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isFullscreen){ e.preventDefault(); exitFullscreen(); }
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && isFullscreen){ exitFullscreen(); }
+  });
+
+  const observer = new MutationObserver(() => {
+    if (panel.classList.contains('hidden') && isFullscreen){ exitFullscreen(); }
+  });
+  observer.observe(panel, { attributes: true, attributeFilter: ['class'] });
+})();
+
 $('filterGenre').addEventListener('change', e => { filterGenre = e.target.value; buildQueue(); renderList(); notify(filterGenre ? `Gênero: ${filterGenre}` : 'Filtro de gênero removido.'); });
 $('filterAlbum').addEventListener('change', e => { filterAlbum = e.target.value; buildQueue(); renderList(); notify(filterAlbum ? `Álbum: ${filterAlbum}` : 'Filtro de álbum removido.'); });
 $('filterArtist').addEventListener('change', e => { filterArtist = e.target.value; buildQueue(); renderList(); notify(filterArtist ? `Artista: ${filterArtist}` : 'Filtro de artista removido.'); });
@@ -994,7 +1220,7 @@ async function restoreFolder(){
   $('repeat').style.color = repeat ? 'var(--accent2)' : '';
   if (saved.trackPath) $('restoreHint').textContent = `Última faixa: ${saved.trackPath} · salvo em ${fmt(saved.time||0)}.`;
   if (isAndroid){
-    try { const info = window.AndroidBridge.getPersistedFolder(); const parsed = JSON.parse(info || 'null'); if (parsed && parsed.uri) window.AndroidBridge.tryRestoreFolder(); else $('folderInfo').textContent = 'Nenhuma pasta autorizada ainda. Toque em “Escolher pasta”.'; } catch {}
+    try { const info = window.AndroidBridge.getPersistedFolder(); const parsed = JSON.parse(info || 'null'); if (parsed && parsed.uri) window.AndroidBridge.tryRestoreFolder(); else $('folderInfo').textContent = 'Nenhuma pasta autorizada ainda. Toque em "Escolher pasta".'; } catch {}
     return;
   }
   if (!('showDirectoryPicker' in window) || !('indexedDB' in window)){ if (saved.folderName) $('folderInfo').textContent = `Última pasta: ${saved.folderName}. Escolha novamente para retomar.`; return; }
